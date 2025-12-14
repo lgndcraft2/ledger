@@ -1,0 +1,5 @@
+app.py
+/venv
+__pycache__/
+/instance/
+.env
