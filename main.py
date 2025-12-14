@@ -6,6 +6,9 @@ import os
 from dotenv import load_dotenv
 from urllib.parse import urlencode
 
+from ai_agent import generate_llama_report
+from models import db, Transaction
+
 load_dotenv()
 
 # --- APP CONFIGURATION ---
@@ -20,28 +23,14 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'myverysecretkey'
 
 # Initialize DB
-db = SQLAlchemy(app)
+db.init_app(app)
 
 # Arkesel Config
 ARKESEL_API_KEY = os.getenv("ARKESEL_API_KEY")
 SMS_SENDER_ID = "ArkeTest"
 
 # --- DATABASE MODELS ---
-class Transaction(db.Model):
-    __tablename__ = 'transactions'
-    id = db.Column(db.Integer, primary_key=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    user_phone = db.Column(db.String(20), nullable=False)
-    transaction_type = db.Column(db.String(50), nullable=False)
-    party_name = db.Column(db.String(100), nullable=False)
-    item_name = db.Column(db.String(100), nullable=False)
-    quantity = db.Column(db.Integer, default=1)
-    total_amount = db.Column(db.Float, nullable=False)
-    amount_paid = db.Column(db.Float, nullable=False)
-
-    @property
-    def balance(self):
-        return self.total_amount - self.amount_paid
+# Transaction model imported from models.py
 
 with app.app_context():
     db.create_all()
@@ -126,7 +115,7 @@ def ussd_handler():
     if is_new_session:
         # Initialize State
         session_state[session_id] = {"step": 0, "data": {}}
-        ussd_response.message = "Welcome to Ledger Mi\n1. Record Sale\n2. Record Purchase\n3. Manage Debts\n4. Recent Transactions"
+        ussd_response.message = "Welcome to Ledger Mi\n1. Record Sale\n2. Record Purchase\n3. Manage Debts\n4. Recent Transactions\n5. Quick Summary"
         ussd_response.continueSession = True
         return jsonify(vars(ussd_response))
 
@@ -163,6 +152,11 @@ def ussd_handler():
 
                 ussd_response.message = msg
 
+            ussd_response.continueSession = False
+        elif user_data == '5':
+            # Generate AI Summary
+            summary = generate_llama_report(msisdn)
+            ussd_response.message = f"Quick Summary:\n{summary}"
             ussd_response.continueSession = False
         else:
             ussd_response.message = "Invalid Option.\n1. Sale\n2. Purchase"
