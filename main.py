@@ -12,8 +12,8 @@ load_dotenv()
 app = Flask(__name__)
 
 # Use SQLite for testing, switch to Neon for production
-uri = "sqlite:///marketcrm.db"
-# uri = "postgresql://user:pass@endpoint.neon.tech/neondb?sslmode=require"
+#uri = "sqlite:///marketcrm.db"
+uri = "postgresql://user:pass@endpoint.neon.tech/neondb?sslmode=require"
 
 app.config['SQLALCHEMY_DATABASE_URI'] = uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
