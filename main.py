@@ -13,7 +13,7 @@ app = Flask(__name__)
 
 # Use SQLite for testing, switch to Neon for production
 #uri = "sqlite:///marketcrm.db"
-uri = "postgresql://user:pass@endpoint.neon.tech/neondb?sslmode=require"
+uri = "postgresql://neondb_owner:npg_oIrB8fM3zSCR@ep-red-dawn-agws209r-pooler.c-2.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 app.config['SQLALCHEMY_DATABASE_URI'] = uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -45,6 +45,7 @@ class Transaction(db.Model):
 
 with app.app_context():
     db.create_all()
+    print("Database tables created.")
 
 # --- HELPER CLASS (Refactored Style) ---
 class USSDResponse:
