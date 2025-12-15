@@ -4,15 +4,21 @@ from datetime import datetime
 import requests
 import os
 from dotenv import load_dotenv
+import mimetypes
 from urllib.parse import urlencode
+from flask_cors import CORS
+from functools import wraps
+import jwt
+import datetime
 
-from ai_agent import generate_llama_report, parse_sales_instruction
-from models import db, Transaction
+from ai_agent import generate_llama_report, parse_sales_instruction, transcribe_audio
+from models import db, Transaction, User
 
 load_dotenv()
 
 # --- APP CONFIGURATION ---
 app = Flask(__name__)
+CORS(app)
 
 # Use SQLite for testing, switch to Neon for production
 #uri = "sqlite:///marketcrm.db"
@@ -21,6 +27,7 @@ uri = "postgresql://neondb_owner:npg_oIrB8fM3zSCR@ep-red-dawn-agws209r-pooler.c-
 app.config['SQLALCHEMY_DATABASE_URI'] = uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'myverysecretkey'
+app.config['JWT_SECRET'] = 'myverysecretkey'
 
 # Initialize DB
 db.init_app(app)
@@ -29,16 +36,16 @@ db.init_app(app)
 ARKESEL_API_KEY = os.getenv("ARKESEL_API_KEY")
 SMS_SENDER_ID = "ArkeTest"
 
-WHATSAPP_TOKEN = "EAAMC7iBSd84BQFTG2VKC09CyuE6tr9a17qoxtfOoqYMpdPTuzakqBxf0GcGdIwLKEurIHN7P4VBNfscPMRl9roBgSLe3GjnGwoK3maW657VaJhtnxXpbKMnJygzZBlVTw5XoaD8r8VpyF4pdjSdheQpsYmbzen4CUjHdJBUiMegxrBOywQ3uZBzdOYvCT7O8r0XENLJUFaLVPl5G51yHGIblPKLefoZCyR2hIAMNa1Nw5oXmz8ZCWZAGdcB7VuAJCiFPhLS3GDZAolCDSJQiNfQgVT"
+WHATSAPP_TOKEN = "EAAMC7iBSd84BQEZC5KuCSJZAAwyBl5XqGsB7CayHkQEqXpZA78lWEBnxHzHOOIFu42UdWusfQYtOcfbY7ST6MzYF7Fn30KP6B71WxpgckjEGyk1ZBJ9GVHDvce3wVM3AXPBzAklpgXFNJjHDVZCvhXLOyGI1U6m4aWndhdxukhD98ZB1pWasVsltXtDPDCJTbNzHizikriaryBXdwU8ggZCXuuZCl36tzs0W90L9RuPdWpEcNcxPkVkeUd7i5wQyu5jGSHZAZC9mCwjWjjHfkKYb9jmLgb"
 PHONE_NUMBER_ID = "889842650881143" 
 VERIFY_TOKEN = "marketcrm_secret"
 
 # --- DATABASE MODELS ---
 # Transaction model imported from models.py
 
-# with app.app_context():
-#     db.create_all()
-#     print("Database tables created.")
+with app.app_context():
+    db.create_all()
+    print("Database tables created.")
 
 # --- HELPER CLASS (Refactored Style) ---
 class USSDResponse:
@@ -131,6 +138,47 @@ def send_whatsapp_message(to_number, message_body):
             
     except Exception as e:
         print(f"❌ CRITICAL CONNECTION ERROR: {e}")
+        return None
+    
+def download_whatsapp_media(media_id):
+    """
+    1. Asks Meta for the media URL using the media_id.
+    2. Downloads the actual file bytes.
+    3. Saves it locally to a temporary file.
+    """
+    try:
+        # 1. Get the URL
+        url = f"https://graph.facebook.com/v17.0/{media_id}"
+        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+        
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            print("❌ Failed to get media URL")
+            return None
+            
+        media_url = response.json().get("url")
+        mime_type = response.json().get("mime_type")
+        
+        # 2. Download the File
+        # Note: We must pass the Token again for the actual file
+        file_response = requests.get(media_url, headers=headers)
+        
+        if file_response.status_code == 200:
+            # 3. Determine extension and save
+            ext = mimetypes.guess_extension(mime_type) or ".ogg"
+            filename = f"temp_voice_{media_id}{ext}"
+            
+            with open(filename, "wb") as f:
+                f.write(file_response.content)
+            
+            print(f"✅ Audio downloaded: {filename}")
+            return filename
+        else:
+            print("❌ Failed to download file bytes")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Download Error: {e}")
         return None
 
 
@@ -441,6 +489,61 @@ def whatsapp_webhook():
                             
                             return 'EVENT_RECEIVED', 200
                         
+                    elif msg['type'] == 'audio':
+                        print("🎤 Voice Note Received!")
+                        send_whatsapp_message(from_number, "🎤 Listening...")
+                        
+                        media_id = msg['audio']['id']
+                        
+                        # A. Download
+                        audio_path = download_whatsapp_media(media_id)
+                        
+                        if audio_path:
+                            # B. Transcribe
+                            transcribed_text = transcribe_audio(audio_path)
+                            
+                            # Clean up file
+                            if os.path.exists(audio_path):
+                                os.remove(audio_path)
+                                
+                            if transcribed_text:
+                                print(f"🗣️ User said: {transcribed_text}")
+                                send_whatsapp_message(from_number, f"🗣️ I heard: \"{transcribed_text}\"")
+                                
+                                # C. REUSE YOUR TEXT LOGIC!
+                                # Pass the transcribed text exactly as if the user typed it.
+                                # This avoids duplicating code.
+                                
+                                # --- COPY OF YOUR LOGIC FROM THE TEXT BLOCK ---
+                                if "report" in transcribed_text.lower() or "summary" in transcribed_text.lower():
+                                    summary = generate_llama_report(from_number)
+                                    send_whatsapp_message(from_number, summary)
+                                else:
+                                    extracted = parse_sales_instruction(transcribed_text)
+                                    action = extracted.get('action') if extracted else None
+                                    
+                                    if action in ["SALE", "PURCHASE"]:
+                                        save_transaction_sql(
+                                            phone=from_number,
+                                            t_type=action,
+                                            party=extracted.get('party_name', 'Unknown'),
+                                            item=extracted.get('item', 'Item'),
+                                            qty=extracted.get('qty', 1),
+                                            total=extracted.get('total_amount', 0),
+                                            paid=extracted.get('amount_paid', 0)
+                                        )
+                                        reply = f"✅ Recorded {action}: {extracted.get('item')}"
+                                        send_whatsapp_message(from_number, reply)
+                                    else:
+                                        send_whatsapp_message(from_number, "I heard you, but couldn't catch the transaction details.")
+                            else:
+                                send_whatsapp_message(from_number, "I couldn't understand the audio.")
+                        else:
+                            send_whatsapp_message(from_number, "Failed to download audio.")
+                            
+                    else:
+                        print(f"Unknown message type: {msg['type']}")
+
                         # --- B. AI PROCESSING (TRANSACTIONS) ---
                         extracted = parse_sales_instruction(user_text)
                         
@@ -499,7 +602,127 @@ def whatsapp_webhook():
 
         return 'EVENT_RECEIVED', 200
     
+# --- AUTH HELPER (JWT DECORATOR) ---
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization') # Expecting "Bearer <token>"
+        
+        if not token:
+            return jsonify({'message': 'Token is missing!'}), 401
+        
+        try:
+            # Clean "Bearer " prefix if present
+            if "Bearer" in token:
+                token = token.split(" ")[1]
+                
+            data = jwt.decode(token, app.config['JWT_SECRET'], algorithms=["HS256"])
+            current_user_phone = data['phone']
+        except:
+            return jsonify({'message': 'Token is invalid!'}), 401
+            
+        return f(current_user_phone, *args, **kwargs)
+    return decorated
 
+# =========================================================
+#                 WEB APP API ROUTES
+# =========================================================
+
+# 1. LOGIN (Step 1: Request OTP - Mocked)
+@app.route('/api/auth/login', methods=['POST'])
+def login_request():
+    data = request.get_json()
+    phone = data.get('phone')
+    
+    if not phone:
+        return jsonify({'error': 'Phone number required'}), 400
+        
+    # In a real app, we would generate a random code and send via Arkesel/Twilio here.
+    # For now, we just say "Success, check your phone"
+    return jsonify({'message': 'OTP sent', 'debug_hint': 'Use 000000'}), 200
+
+# 2. VERIFY OTP (Step 2: Hardcoded 000000)
+@app.route('/api/auth/verify', methods=['POST'])
+def verify_otp():
+    data = request.get_json()
+    phone = data.get('phone')
+    code = data.get('code')
+    
+    # HARDCODED VERIFICATION
+    if code == "000000":
+        # Check if user exists, if not, create them
+        user = User.query.filter_by(phone=phone).first()
+        if not user:
+            user = User(phone=phone)
+            db.session.add(user)
+            db.session.commit()
+            
+        # Generate JWT Token
+        token = jwt.encode({
+            'phone': phone,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7) # 7 day login
+        }, app.config['JWT_SECRET'], algorithm="HS256")
+        
+        return jsonify({'token': token, 'phone': phone, 'message': 'Login successful'}), 200
+    
+    else:
+        return jsonify({'error': 'Invalid verification code'}), 401
+
+# 3. GET DASHBOARD DATA (Protected)
+@app.route('/api/dashboard', methods=['GET'])
+@token_required
+def get_dashboard(current_user_phone):
+    # Fetch recent transactions
+    txns = Transaction.query.filter_by(user_phone=current_user_phone)\
+        .order_by(Transaction.id.desc()).all()
+    
+    # Calculate Totals
+    total_sales = sum(t.total_amount for t in txns if t.transaction_type == 'SALE')
+    total_debt_owed_to_me = sum((t.total_amount - t.amount_paid) for t in txns if t.transaction_type == 'SALE')
+    
+    # Serialize Data for React
+    txn_list = []
+    for t in txns:
+        txn_list.append({
+            'id': t.id,
+            'date': t.created_at.strftime('%Y-%m-%d %H:%M'),
+            'type': t.transaction_type,
+            'party': t.party_name,
+            'item': t.item_name,
+            'amount': t.total_amount,
+            'paid': t.amount_paid,
+            'balance': t.total_amount - t.amount_paid
+        })
+        
+    return jsonify({
+        'stats': {
+            'total_sales': total_sales,
+            'active_debts': total_debt_owed_to_me
+        },
+        'transactions': txn_list
+    })
+
+# 4. ADD TRANSACTION FROM WEB (Protected)
+@app.route('/api/transaction/add', methods=['POST'])
+@token_required
+def add_web_transaction(current_user_phone):
+    data = request.get_json()
+    
+    # Reuse your existing helper
+    success = save_transaction_sql(
+        phone=current_user_phone,
+        t_type=data.get('type'), # 'SALE' or 'PURCHASE'
+        party=data.get('party_name'),
+        item=data.get('item_name'),
+        qty=data.get('quantity', 1),
+        total=data.get('total_amount'),
+        paid=data.get('amount_paid')
+    )
+    
+    if success:
+        return jsonify({'message': 'Transaction saved'}), 201
+    else:
+        return jsonify({'error': 'Failed to save'}), 500
 
 if __name__ == '__main__':
     app.run(port=5000, debug=True)

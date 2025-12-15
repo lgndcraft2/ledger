@@ -13,6 +13,24 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # Best practice: Store this in an environment variable or config file
 client = Groq()
 
+def transcribe_audio(audio_file_path):
+    """
+    Takes a local audio file path, sends it to Groq (Whisper),
+    and returns the transcribed text.
+    """
+    try:
+        with open(audio_file_path, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+                file=(audio_file_path, file.read()),
+                model="whisper-large-v3", # The best model for mixed accents
+                response_format="text",   # Just give us the string
+                temperature=0.0           # Keep it accurate
+            )
+        return transcription
+    except Exception as e:
+        print(f"Transcription Error: {e}")
+        return None
+
 def generate_llama_report(user_phone):
     """
     1. Fetches today's transactions for the user.

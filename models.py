@@ -29,3 +29,10 @@ class Transaction(db.Model):
 
     def __repr__(self):
         return f"<Txn {self.transaction_type}: {self.item_name}>"
+    
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    phone = db.Column(db.String(20), unique=True, nullable=False)
+    name = db.Column(db.String(50), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
