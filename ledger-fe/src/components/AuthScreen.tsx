@@ -21,6 +21,7 @@ export function AuthScreen({ onLogin }: Props) {
       setStep(2);
     } catch (e) {
       alert('Login failed. Ensure backend is running.');
+      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -32,7 +33,8 @@ export function AuthScreen({ onLogin }: Props) {
       const res = await axios.post(`${API_URL}/verify`, { phone, code: otp });
       onLogin(res.data.token);
     } catch (e) {
-      alert('Invalid code. Try 000000');
+        console.error(e);
+        alert('Invalid code. Try 000000');
     } finally {
       setLoading(false);
     }
