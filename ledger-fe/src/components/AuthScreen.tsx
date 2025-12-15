@@ -12,7 +12,7 @@ export function AuthScreen({ onLogin }: Props) {
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const API_URL = 'http://127.0.0.1:5000/api/auth';
+  const API_URL = 'https://ledger-tau-two.vercel.app/api/auth';
 
   const handleRequestOtp = async () => {
     setLoading(true);

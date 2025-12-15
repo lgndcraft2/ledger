@@ -28,7 +28,7 @@ export function AddTransactionModal({ token, onClose, onSuccess }: AddTransactio
   const handleSubmit = async () => {
     setLoading(true);
     try {
-      await axios.post('http://127.0.0.1:5000/api/transaction/add', {
+      await axios.post('https://ledger-tau-two.vercel.app/api/transaction/add', {
         ...formData,
         total_amount: Number(formData.total_amount),
         amount_paid: Number(formData.amount_paid || formData.total_amount) // Default to full pay
