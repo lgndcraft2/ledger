@@ -56,6 +56,8 @@ session_state = {}
 # --- HELPER FUNCTIONS ---
 def save_transaction_sql(phone, t_type, party, item, qty, total, paid):
     try:
+        if phone.startswith('+'):
+            phone = phone[1:]  # Remove '+' if present
         new_txn = Transaction(
             user_phone=phone, transaction_type=t_type, party_name=party,
             item_name=item, quantity=int(qty), total_amount=float(total),
