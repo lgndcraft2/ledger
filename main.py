@@ -145,6 +145,9 @@ def ussd_handler():
     msisdn = ussd_request.get('msisdn') or ussd_request.get('mobile_number')
     user_data = str(ussd_request.get('userData', '')).strip()
     
+    if msisdn.startswith('+'):
+        msisdn = msisdn[1:]  # Remove '+' if present
+        
     # Arkesel often sends 'userInput' instead of 'userData' in some versions
     if not user_data:
         user_data = str(ussd_request.get('user_input', '')).strip()
