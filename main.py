@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 from urllib.parse import urlencode
 
-from ai_agent import generate_llama_report
+from ai_agent import generate_llama_report, parse_sales_instruction
 from models import db, Transaction
 
 load_dotenv()
@@ -29,12 +29,16 @@ db.init_app(app)
 ARKESEL_API_KEY = os.getenv("ARKESEL_API_KEY")
 SMS_SENDER_ID = "ArkeTest"
 
+WHATSAPP_TOKEN = "EAAMC7iBSd84BQFTG2VKC09CyuE6tr9a17qoxtfOoqYMpdPTuzakqBxf0GcGdIwLKEurIHN7P4VBNfscPMRl9roBgSLe3GjnGwoK3maW657VaJhtnxXpbKMnJygzZBlVTw5XoaD8r8VpyF4pdjSdheQpsYmbzen4CUjHdJBUiMegxrBOywQ3uZBzdOYvCT7O8r0XENLJUFaLVPl5G51yHGIblPKLefoZCyR2hIAMNa1Nw5oXmz8ZCWZAGdcB7VuAJCiFPhLS3GDZAolCDSJQiNfQgVT"
+PHONE_NUMBER_ID = "889842650881143" 
+VERIFY_TOKEN = "marketcrm_secret"
+
 # --- DATABASE MODELS ---
 # Transaction model imported from models.py
 
-with app.app_context():
-    db.create_all()
-    print("Database tables created.")
+# with app.app_context():
+#     db.create_all()
+#     print("Database tables created.")
 
 # --- HELPER CLASS (Refactored Style) ---
 class USSDResponse:
@@ -82,6 +86,50 @@ def send_sms(api_key, message, sender_id, phone_number):
     print("Raw response:", response.text)
 
     return response.text
+
+# --- PASTE THIS ABOVE YOUR @app.route CODE ---
+
+def send_whatsapp_message(to_number, message_body):
+    # 1. Check if keys are loaded
+    if not PHONE_NUMBER_ID or not WHATSAPP_TOKEN:
+        print("❌ ERROR: API Keys are missing! Check your .env or variables.")
+        return None
+
+    # 2. Prepare the URL and Headers
+    url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    # 3. Clean the phone number (remove '+' if present)
+    clean_phone = str(to_number).replace('+', '')
+    
+    data = {
+        "messaging_product": "whatsapp",
+        "to": clean_phone,
+        "type": "text",
+        "text": {"body": message_body}
+    }
+    
+    print(f"📤 Sending reply to {clean_phone}...")
+    
+    try:
+        response = requests.post(url, headers=headers, json=data)
+
+        print(response)
+        # 4. Check for success
+        if response.status_code == 200:
+            print("✅ Message sent successfully!")
+            return 200
+        else:
+            print(f"❌ FAILED to send. Code: {response.status_code}")
+            print(f"❌ META ERROR: {response.text}")
+            return response.status_code
+            
+    except Exception as e:
+        print(f"❌ CRITICAL CONNECTION ERROR: {e}")
+        return None
 
 
 # --- MAIN ROUTE ---
@@ -328,6 +376,125 @@ def ussd_handler():
         session_state[session_id] = state
 
     return jsonify(vars(ussd_response))
+
+
+@app.route('/whatsapp', methods=['GET', 'POST'])
+def whatsapp_webhook():
+    # ---------------------------------------------------------
+    # 1. VERIFICATION (Connects your Webhook to Meta)
+    # ---------------------------------------------------------
+    if request.method == 'GET':
+        mode = request.values.get('hub.mode')
+        token = request.values.get('hub.verify_token')
+        challenge = request.values.get('hub.challenge')
+        
+        # Ensure VERIFY_TOKEN is defined in your .env or config
+        if mode == 'subscribe' and token == os.getenv("VERIFY_TOKEN", "marketcrm_secret"):
+            return challenge, 200
+        else:
+            return 'Forbidden', 403
+
+    # ---------------------------------------------------------
+    # 2. HANDLING MESSAGES (Receive -> AI -> DB -> Reply)
+    # ---------------------------------------------------------
+    #print("WhatsApp Webhook Event Received")
+    if request.method == 'POST':
+        data = request.get_json()
+        #print("Webhook Data:", data)
+        # Check if the structure is valid
+        if data.get('object'):
+            #print("Valid object found in webhook data.")
+            try:
+                entry = data['entry'][0]
+                changes = entry['changes'][0]
+                value = changes['value']
+                print("Processing WhatsApp message...    1/3")
+                if 'messages' in value:
+                    msg = value['messages'][0]
+                    from_number = msg['from'] 
+                    #print(f"Message from {from_number}")
+                    print("Processing WhatsApp message...    2/3")
+                    if msg['type'] == 'text':
+                        user_text = msg['text']['body']
+                        print(f"User Text: {user_text}")
+                        print("Processing WhatsApp message...    3/3")
+                        # --- A. CHECK FOR REPORT REQUEST (NEW ADDITION) ---
+                        if "report" in user_text.lower() or "summary" in user_text.lower():
+                            # Optional: Send a "thinking" message
+                            print("Generating report...")
+                            try:
+                                print("Sending thinking message...")
+                                send_whatsapp_message(from_number, "Gathering your business data... 🧠")
+                                print("Sent thinking message.")
+                            except Exception as e:
+                                print(f"Error sending thinking message: {e}")
+                            
+                            # Generate Report
+                            summary = generate_llama_report(from_number)
+                            send_whatsapp_message(from_number, summary)
+                            print("Report sent.")
+                            
+                            return 'EVENT_RECEIVED', 200
+                        
+                        # --- B. AI PROCESSING (TRANSACTIONS) ---
+                        extracted = parse_sales_instruction(user_text)
+                        
+                        # Handle cases where AI fails or returns None
+                        if not extracted:
+                            send_whatsapp_message(from_number, "I didn't understand that. Try: 'Sold 2 rice to Rose for 5k'")
+                            return 'EVENT_RECEIVED', 200
+
+                        action = extracted.get('action')
+                        
+                        # --- C. ROUTING LOGIC ---
+                        if action in ["SALE", "PURCHASE"]:
+                            
+                            # 1. Save to Database
+                            save_transaction_sql(
+                                phone=from_number,
+                                t_type=action,
+                                party=extracted.get('party_name', 'Unknown'),
+                                item=extracted.get('item', 'Item'),
+                                qty=extracted.get('qty', 1),
+                                total=extracted.get('total_amount', 0),
+                                paid=extracted.get('amount_paid', 0)
+                            )
+                            
+                            # 2. Calculate Balance/Debt
+                            total_amt = float(extracted.get('total_amount', 0))
+                            paid_amt = float(extracted.get('amount_paid', 0))
+                            balance = total_amt - paid_amt
+                            
+                            # 3. Format the Reply
+                            if action == "SALE":
+                                reply = (f"✅ *Sale Recorded!*\n"
+                                         f"Customer: {extracted.get('party_name', 'Customer')}\n"
+                                         f"Item: {extracted.get('item')}\n"
+                                         f"Amount: N{total_amt:,.2f}\n"
+                                         f"Balance Due: N{balance:,.2f}")
+                            else:
+                                reply = (f"✅ *Purchase Recorded!*\n"
+                                         f"Supplier: {extracted.get('party_name', 'Supplier')}\n"
+                                         f"Item: {extracted.get('item')}\n"
+                                         f"Cost: N{total_amt:,.2f}")
+                            
+                            # 4. Send Reply
+                            send_whatsapp_message(from_number, reply)
+                        
+                        elif action == "DEBT_PAYMENT":
+                            # Future functionality
+                            send_whatsapp_message(from_number, "💰 Debt payment recorded (functionality coming soon).")
+
+                        else:
+                            # AI returned "UNKNOWN"
+                            send_whatsapp_message(from_number, "I didn't quite catch that. Try saying:\n'Sold 2 rice to Tola for 5000'")
+
+            except Exception as e:
+                print(f"Error processing webhook: {e}")
+
+        return 'EVENT_RECEIVED', 200
+    
+
 
 if __name__ == '__main__':
     app.run(port=5000, debug=True)

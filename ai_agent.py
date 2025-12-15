@@ -2,6 +2,8 @@ from groq import Groq
 from models import Transaction
 import os
 from dotenv import load_dotenv
+import json
+
 
 load_dotenv()
 
@@ -60,3 +62,40 @@ def generate_llama_report(user_phone):
     except Exception as e:
         print(f"Llama Error: {e}")
         return "Sorry, my brain is tired. I couldn't generate the report."
+    
+
+def parse_sales_instruction(user_text):
+    """
+    Takes natural text: "Sold 2 Rice to Rose for 5k"
+    Returns JSON: {"action": "SALE", "item": "Rice", "qty": 2, "price": 5000, "paid": 5000}
+    """
+    
+    system_prompt = """
+    You are a Data Extraction Agent. Convert the user's message into a JSON Object.
+    
+    Rules:
+    1. Identify the ACTION: "SALE", "PURCHASE", "DEBT_PAYMENT", or "UNKNOWN".
+    2. Extract: item_name, quantity, total_amount, amount_paid, party_name (customer/supplier).
+    3. If 'amount_paid' is not mentioned, assume it equals 'total_amount' (Full payment).
+    4. If 'quantity' is missing, assume 1.
+    5. Return ONLY JSON. No explanation.
+    
+    Example Input: "Sold 3 yams to Paul for 3000 but he paid 1000"
+    Example JSON: {"action": "SALE", "item": "yams", "qty": 3, "total_amount": 3000, "amount_paid": 1000, "party_name": "Paul"}
+    """
+
+    try:
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text}
+            ],
+            temperature=0, # Keep it strict
+            response_format={"type": "json_object"} # Force JSON output
+        )
+        print(completion.choices[0].message.content)
+        return json.loads(completion.choices[0].message.content)
+    except Exception as e:
+        print(f"AI Parse Error: {e}")
+        return None
