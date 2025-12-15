@@ -57,7 +57,7 @@ export function AuthScreen({ onLogin }: Props) {
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="0907 430 4369"
+                placeholder=" 234 907 430 4369"
                 className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 outline-none transition-all text-lg"
               />
             </div>
